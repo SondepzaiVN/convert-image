@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://convert-image.dangson.id.vn/sitemap.xml
