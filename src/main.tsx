@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import JSZip from "jszip";
-import { ArrowRightLeft, Check, Download, FileImage, FolderArchive, ImagePlus, Languages, LoaderCircle, LockKeyhole, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, Check, ChevronDown, Download, FileImage, FolderArchive, ImagePlus, Languages, LoaderCircle, LockKeyhole, Menu, RotateCcw, ShieldCheck, Trash2, X } from "lucide-react";
+import siteContent from "./site-content.json";
 import "./styles.css";
 
 type Format = "jpeg" | "png" | "webp" | "avif" | "heic";
@@ -9,324 +10,81 @@ type Status = "waiting" | "converting" | "done" | "error";
 type Language = "vi" | "en";
 type ImageItem = { id: string; file: File; from: Format; status: Status; output?: Blob; outputName?: string; width?: number; height?: number; error?: string };
 type WorkerReply = { id: string; ok: boolean; buffer?: ArrayBuffer; width?: number; height?: number; error?: string };
+type ConversionPage = (typeof siteContent.conversions)[number];
 type ModelContext = { registerTool: (tool: { name: string; title: string; description: string; inputSchema: object; annotations: { readOnlyHint: boolean; untrustedContentHint: boolean }; execute: (input: unknown) => unknown }, options?: { signal?: AbortSignal }) => void | Promise<void> };
-
 declare global { interface Document { modelContext?: ModelContext } }
 
 const FORMAT_META: Record<Format, { label: string; extension: string; mime: string }> = {
-  jpeg: { label: "JPG", extension: "jpg", mime: "image/jpeg" },
-  png: { label: "PNG", extension: "png", mime: "image/png" },
-  webp: { label: "WebP", extension: "webp", mime: "image/webp" },
-  avif: { label: "AVIF", extension: "avif", mime: "image/avif" },
-  heic: { label: "HEIC", extension: "heic", mime: "image/heic" },
+  jpeg: { label: "JPG", extension: "jpg", mime: "image/jpeg" }, png: { label: "PNG", extension: "png", mime: "image/png" }, webp: { label: "WebP", extension: "webp", mime: "image/webp" }, avif: { label: "AVIF", extension: "avif", mime: "image/avif" }, heic: { label: "HEIC", extension: "heic", mime: "image/heic" },
 };
 const FORMAT_ORDER = Object.keys(FORMAT_META) as Format[];
+const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const MAX_BATCH_SIZE = 20;
+const WORKER_TIMEOUT = 120_000;
 
 const copy = {
-  vi: {
-    siteName: "Chuyển đổi định dạng ảnh",
-    home: "trang chủ",
-    privacyPill: "Ảnh không rời khỏi thiết bị",
-    eyebrow: "MÃ NGUỒN MỞ · MIỄN PHÍ · KHÔNG GIỚI HẠN LƯỢT",
-    input: "Định dạng đầu vào",
-    auto: "TỰ ĐỘNG NHẬN DIỆN",
-    output: "Chuyển thành",
-    outputAria: "Định dạng đầu ra",
-    converterAria: "Bộ chuyển đổi ảnh",
-    drop: "Thả ảnh vào đây",
-    or: "hoặc",
-    choose: "chọn ảnh từ máy",
-    unsupported: (count: number) => `${count} tệp không thuộc các định dạng đang hỗ trợ.`,
-    queue: "Hàng đợi",
-    images: (count: number) => `${count} ảnh`,
-    clear: "Xóa tất cả",
-    waiting: "Chờ xử lý",
-    converting: "Đang đổi",
-    done: "Hoàn tất",
-    error: "Có lỗi",
-    download: "Tải",
-    remove: "Xóa",
-    quality: "Chất lượng",
-    lossless: "Không mất dữ liệu",
-    zip: "Tải ZIP",
-    again: "Chuyển lại",
-    progress: (value: number) => `Đang chuyển ${value}%`,
-    convertTo: (format: string) => `Chuyển sang ${format}`,
-    localTitle: "Xử lý cục bộ",
-    localText: "Không tải ảnh lên máy chủ",
-    formatsTitle: "Đầu vào & đầu ra",
-    formatsText: "Năm định dạng đều được hỗ trợ",
-    batchTitle: "Chuyển hàng loạt",
-    batchText: "Tải toàn bộ bằng một tệp ZIP",
-    trustAria: "Thông tin quyền riêng tư",
-    footerProduct: "Công cụ ảnh riêng tư",
-    footerTech: "Codec chạy bằng WebAssembly trên thiết bị của bạn",
-    workerNotReady: "Bộ chuyển đổi chưa sẵn sàng.",
-    conversionFailed: "Không thể chuyển đổi ảnh.",
-    webToolTitle: "Chọn định dạng đầu ra",
-    webToolDescription: "Chọn JPG, PNG, WebP, AVIF hoặc HEIC làm định dạng đầu ra hiển thị trong bộ chuyển đổi.",
-    invalidFormat: "Định dạng đầu ra không hợp lệ.",
-  },
-  en: {
-    siteName: "Image format converter",
-    home: "home",
-    privacyPill: "Images never leave your device",
-    eyebrow: "OPEN SOURCE · FREE · UNLIMITED CONVERSIONS",
-    input: "Input format",
-    auto: "AUTO-DETECT",
-    output: "Convert to",
-    outputAria: "Output format",
-    converterAria: "Image converter",
-    drop: "Drop images here",
-    or: "or",
-    choose: "choose images from your device",
-    unsupported: (count: number) => `${count} file${count === 1 ? " is" : "s are"} not supported.`,
-    queue: "Queue",
-    images: (count: number) => `${count} image${count === 1 ? "" : "s"}`,
-    clear: "Clear all",
-    waiting: "Waiting",
-    converting: "Converting",
-    done: "Complete",
-    error: "Error",
-    download: "Download",
-    remove: "Remove",
-    quality: "Quality",
-    lossless: "Lossless",
-    zip: "Download ZIP",
-    again: "Convert again",
-    progress: (value: number) => `Converting ${value}%`,
-    convertTo: (format: string) => `Convert to ${format}`,
-    localTitle: "Local processing",
-    localText: "Nothing is uploaded to a server",
-    formatsTitle: "Input & output",
-    formatsText: "All five formats are supported",
-    batchTitle: "Batch conversion",
-    batchText: "Download everything as one ZIP",
-    trustAria: "Privacy information",
-    footerProduct: "Private image utility",
-    footerTech: "Codecs run with WebAssembly on your device",
-    workerNotReady: "The converter is not ready yet.",
-    conversionFailed: "The image could not be converted.",
-    webToolTitle: "Choose output format",
-    webToolDescription: "Choose JPG, PNG, WebP, AVIF or HEIC as the output format shown in the converter.",
-    invalidFormat: "Invalid output format.",
-  },
+  vi: { input: "Định dạng đầu vào", auto: "TỰ ĐỘNG NHẬN DIỆN", output: "Chuyển thành", outputAria: "Định dạng đầu ra", converterAria: "Bộ chuyển đổi ảnh", drop: "Thả ảnh vào đây", or: "hoặc", choose: "chọn ảnh từ máy", unsupported: (n: number) => `${n} tệp không thuộc định dạng hỗ trợ.`, tooLarge: (n: number) => `${n} tệp vượt quá giới hạn 50 MB.`, tooMany: `Mỗi lượt hỗ trợ tối đa ${MAX_BATCH_SIZE} ảnh.`, queue: "Hàng đợi", images: (n: number) => `${n} ảnh`, clear: "Xóa tất cả", waiting: "Chờ xử lý", converting: "Đang đổi", done: "Hoàn tất", error: "Có lỗi", download: "Tải", remove: "Xóa", quality: "Chất lượng", lossless: "Không mất dữ liệu", zip: "Tải ZIP", again: "Chuyển lại", progress: (n: number) => `Đang chuyển ${n}%`, convertTo: (f: string) => `Chuyển sang ${f}`, workerNotReady: "Bộ chuyển đổi chưa sẵn sàng.", conversionFailed: "Không thể chuyển đổi ảnh.", conversionTimeout: "Quá thời gian xử lý. Hãy thử ảnh nhỏ hơn.", webToolTitle: "Chọn định dạng đầu ra", webToolDescription: "Chọn JPG, PNG, WebP, AVIF hoặc HEIC làm định dạng đầu ra.", invalidFormat: "Định dạng đầu ra không hợp lệ.", language: "Ngôn ngữ giao diện công cụ" },
+  en: { input: "Input format", auto: "AUTO-DETECT", output: "Convert to", outputAria: "Output format", converterAria: "Image converter", drop: "Drop images here", or: "or", choose: "choose images from your device", unsupported: (n: number) => `${n} file${n === 1 ? " is" : "s are"} not supported.`, tooLarge: (n: number) => `${n} file${n === 1 ? " exceeds" : "s exceed"} the 50 MB limit.`, tooMany: `A batch can contain up to ${MAX_BATCH_SIZE} images.`, queue: "Queue", images: (n: number) => `${n} image${n === 1 ? "" : "s"}`, clear: "Clear all", waiting: "Waiting", converting: "Converting", done: "Complete", error: "Error", download: "Download", remove: "Remove", quality: "Quality", lossless: "Lossless", zip: "Download ZIP", again: "Convert again", progress: (n: number) => `Converting ${n}%`, convertTo: (f: string) => `Convert to ${f}`, workerNotReady: "The converter is not ready yet.", conversionFailed: "The image could not be converted.", conversionTimeout: "Conversion timed out. Try a smaller image.", webToolTitle: "Choose output format", webToolDescription: "Choose JPG, PNG, WebP, AVIF or HEIC as the output format.", invalidFormat: "Invalid output format.", language: "Converter interface language" },
 } as const;
 
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let index = 0;
-  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
-  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`;
+const HOME_FAQS = [
+  ["What image formats are supported?", "JPG/JPEG, PNG, WebP, AVIF, and HEIC/HEIF can be used as input or output formats."], ["Is image quality reduced?", "PNG output is lossless. JPG, WebP, AVIF, and HEIC use a quality setting and may discard some detail during encoding."], ["Is there a file size limit?", `Each file can be up to 50 MB, with a maximum of ${MAX_BATCH_SIZE} images in one batch.`], ["Are my images uploaded to a server?", "No. The app reads and converts files locally with WebAssembly in a Web Worker."], ["Can I convert multiple images?", "Yes. Add several images and download the results individually or together as a ZIP."], ["Does it work on mobile?", "Yes, in modern mobile browsers. Large files may need more memory and time on older devices."],
+];
+
+function formatBytes(bytes: number) { if (bytes < 1024) return `${bytes} B`; const units = ["KB", "MB", "GB"]; let value = bytes / 1024; let index = 0; while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; } return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`; }
+function readAscii(bytes: Uint8Array, start: number, length: number) { return String.fromCharCode(...bytes.slice(start, start + length)); }
+async function detectFormat(file: File): Promise<Format | null> { const bytes = new Uint8Array(await file.slice(0, 64).arrayBuffer()); if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg"; if ([137,80,78,71,13,10,26,10].every((v, i) => bytes[i] === v)) return "png"; if (readAscii(bytes,0,4) === "RIFF" && readAscii(bytes,8,4) === "WEBP") return "webp"; if (readAscii(bytes,4,4) === "ftyp") { const brands = readAscii(bytes,8,Math.max(0,bytes.length-8)).toLowerCase(); if (brands.includes("avif") || brands.includes("avis")) return "avif"; if (["heic","heix","hevc","hevx","mif1","msf1"].some((b) => brands.includes(b))) return "heic"; } return null; }
+function outputName(name: string, format: Format) { const base = (name.replace(/\.[^.]+$/, "") || "converted-image").replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").slice(0,120); return `${base}.${FORMAT_META[format].extension}`; }
+function downloadBlob(blob: Blob, name: string) { const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = name; anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
+function createConverterWorker() { return new Worker(new URL("./converter.worker.ts", import.meta.url), { type: "module" }); }
+
+function AdSlot({ slot }: { slot: string }) {
+  const client = import.meta.env.VITE_ADSENSE_CLIENT as string | undefined;
+  const slotId = import.meta.env[`VITE_ADSENSE_SLOT_${slot.toUpperCase()}`] as string | undefined;
+  useEffect(() => { if (!client || !slotId || document.querySelector("script[data-convert-image-adsense]")) return; const script = document.createElement("script"); script.async = true; script.crossOrigin = "anonymous"; script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(client)}`; script.dataset.convertImageAdsense = "true"; document.head.appendChild(script); }, [client, slotId]);
+  useEffect(() => { if (!client || !slotId) return; try { const target = window as Window & { adsbygoogle?: unknown[] }; target.adsbygoogle = target.adsbygoogle || []; target.adsbygoogle.push({}); } catch { /* blocked ads are non-fatal */ } }, [client, slotId]);
+  if (!client || !slotId) return null;
+  return <aside className="ad-container" aria-label="Advertisement"><ins className="adsbygoogle" style={{ display: "block" }} data-ad-client={client} data-ad-slot={slotId} data-ad-format="auto" data-full-width-responsive="true" /></aside>;
 }
 
-function readAscii(bytes: Uint8Array, start: number, length: number) {
-  return String.fromCharCode(...bytes.slice(start, start + length));
+function Converter({ initialTarget = "png", expectedFrom }: { initialTarget?: Format; expectedFrom?: Format }) {
+  const [language, setLanguage] = useState<Language>(() => { const saved = localStorage.getItem("convert-image-language"); return saved === "vi" || saved === "en" ? saved : "en"; });
+  const [items, setItems] = useState<ImageItem[]>([]); const [target, setTarget] = useState<Format>(initialTarget); const [quality, setQuality] = useState(86); const [dragging, setDragging] = useState(false); const [notice, setNotice] = useState(""); const [isConverting, setIsConverting] = useState(false); const inputRef = useRef<HTMLInputElement>(null); const workerRef = useRef<Worker | null>(null); const text = copy[language];
+  const replaceWorker = useCallback(() => { workerRef.current?.terminate(); workerRef.current = createConverterWorker(); }, []);
+  useEffect(() => { workerRef.current = createConverterWorker(); return () => workerRef.current?.terminate(); }, []);
+  useEffect(() => { localStorage.setItem("convert-image-language", language); }, [language]);
+  const resetResults = useCallback((newTarget: Format) => { setTarget(newTarget); setItems((current) => current.map((item) => ({ ...item, status: "waiting", output: undefined, outputName: undefined, error: undefined }))); }, []);
+  useEffect(() => { const context = document.modelContext; if (!context?.registerTool) return; const lifecycle = new AbortController(); void Promise.resolve(context.registerTool({ name: "set_output_format", title: text.webToolTitle, description: text.webToolDescription, inputSchema: { type: "object", properties: { format: { type: "string", enum: FORMAT_ORDER } }, required: ["format"], additionalProperties: false }, annotations: { readOnlyHint: false, untrustedContentHint: false }, execute(input) { const format = (input as { format?: string })?.format; if (!FORMAT_ORDER.includes(format as Format)) throw new Error(text.invalidFormat); resetResults(format as Format); return { selectedFormat: format }; } }, { signal: lifecycle.signal })).catch(() => undefined); return () => lifecycle.abort(); }, [resetResults, text]);
+  const doneItems = useMemo(() => items.filter((item) => item.status === "done" && item.output), [items]); const progress = items.length ? Math.round((doneItems.length / items.length) * 100) : 0;
+  const addFiles = useCallback(async (files: File[]) => { setNotice(""); const capacity = Math.max(0, MAX_BATCH_SIZE - items.length); const selected = files.slice(0, capacity); const messages: string[] = []; if (files.length > capacity) messages.push(text.tooMany); const next: ImageItem[] = []; let unsupported = 0; let tooLarge = 0; for (const file of selected) { if (file.size > MAX_FILE_SIZE) { tooLarge += 1; continue; } const from = await detectFormat(file); if (!from) { unsupported += 1; continue; } next.push({ id: crypto.randomUUID(), file, from, status: "waiting" }); } setItems((current) => [...current, ...next]); if (unsupported) messages.push(text.unsupported(unsupported)); if (tooLarge) messages.push(text.tooLarge(tooLarge)); setNotice(messages.join(" ")); if (inputRef.current) inputRef.current.value = ""; }, [items.length, text]);
+  const runWorker = useCallback((item: ImageItem) => new Promise<WorkerReply>(async (resolve, reject) => { const worker = workerRef.current; if (!worker) { reject(new Error(text.workerNotReady)); return; } let timeout = 0; const cleanup = () => { clearTimeout(timeout); worker.removeEventListener("message", onMessage); worker.removeEventListener("error", onError); }; const onMessage = (event: MessageEvent<WorkerReply>) => { if (event.data.id !== item.id) return; cleanup(); resolve(event.data); }; const onError = () => { cleanup(); replaceWorker(); reject(new Error(text.conversionFailed)); }; timeout = window.setTimeout(() => { cleanup(); replaceWorker(); reject(new Error(text.conversionTimeout)); }, WORKER_TIMEOUT); worker.addEventListener("message", onMessage); worker.addEventListener("error", onError); try { const buffer = await item.file.arrayBuffer(); worker.postMessage({ id: item.id, buffer, from: item.from, to: target, quality, language }, [buffer]); } catch (error) { cleanup(); reject(error); } }), [language, quality, replaceWorker, target, text]);
+  const convertAll = useCallback(async () => { if (!items.length || isConverting) return; setIsConverting(true); setNotice(""); for (const item of [...items]) { setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "converting", error: undefined } : entry)); try { const result = await runWorker(item); if (!result.ok || !result.buffer) throw new Error(result.error || text.conversionFailed); const blob = new Blob([result.buffer], { type: FORMAT_META[target].mime }); setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "done", output: blob, outputName: outputName(entry.file.name, target), width: result.width, height: result.height } : entry)); } catch (error) { setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: error instanceof Error ? error.message : text.conversionFailed } : entry)); } } setIsConverting(false); }, [isConverting, items, runWorker, target, text]);
+  const downloadZip = useCallback(async () => { const zip = new JSZip(); const used = new Set<string>(); doneItems.forEach((item,index) => { if (!item.output || !item.outputName) return; let name = item.outputName; if (used.has(name.toLowerCase())) name = `${name.replace(/\.[^.]+$/, "")}-${index+1}.${FORMAT_META[target].extension}`; used.add(name.toLowerCase()); zip.file(name,item.output); }); downloadBlob(await zip.generateAsync({ type: "blob", compression: "STORE" }), `converted-images-${new Date().toISOString().slice(0,10)}.zip`); }, [doneItems,target]);
+  return <section className="converter-card" aria-label={text.converterAria}>
+    <div className="converter-toolbar"><span>Private browser-based converter</span><div className="language-switch" role="group" aria-label={text.language}><Languages size={16} />{(["vi","en"] as Language[]).map((value) => <button key={value} type="button" className={language === value ? "active" : ""} aria-pressed={language === value} onClick={() => setLanguage(value)}>{value.toUpperCase()}</button>)}</div></div>
+    <div className="format-flow"><div className="format-side"><span className="control-label">{text.input}</span><div className="auto-format"><span>{expectedFrom ? `${FORMAT_META[expectedFrom].label} · ${text.auto}` : text.auto}</span><small>JPG · PNG · WEBP · AVIF · HEIC</small></div></div><div className="flow-arrow"><ArrowRightLeft size={20} /></div><div className="format-side output-side"><span className="control-label">{text.output}</span><div className="format-options" role="radiogroup" aria-label={text.outputAria}>{FORMAT_ORDER.map((format) => <button key={format} className={target === format ? "format-button active" : "format-button"} type="button" role="radio" aria-checked={target === format} onClick={() => resetResults(format)} disabled={isConverting}>{FORMAT_META[format].label}</button>)}</div></div></div>
+    <div className={dragging ? "drop-zone dragging" : "drop-zone"} onDragEnter={(e) => { e.preventDefault(); setDragging(true); }} onDragOver={(e) => e.preventDefault()} onDragLeave={(e) => { if (e.currentTarget === e.target) setDragging(false); }} onDrop={(e) => { e.preventDefault(); setDragging(false); void addFiles(Array.from(e.dataTransfer.files)); }}><input ref={inputRef} aria-label={text.choose} type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.heic,.heif,image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif" onChange={(e) => void addFiles(Array.from(e.target.files ?? []))} /><div className="drop-icon"><ImagePlus size={30} /></div><div><h2>{text.drop}</h2><p>{text.or} <button type="button" className="text-button" onClick={() => inputRef.current?.click()}>{text.choose}</button></p></div><span className="drop-formats">JPG · JPEG · PNG · WEBP · AVIF · HEIC · HEIF</span></div>
+    {notice && <div className="notice" role="status">{notice}</div>}
+    {items.length > 0 && <div className="queue-panel"><div className="queue-header"><div><span className="control-label">{text.queue}</span><strong>{text.images(items.length)}</strong></div><button className="icon-text-button" type="button" onClick={() => setItems([])} disabled={isConverting}><Trash2 size={16} /> {text.clear}</button></div><div className="file-list">{items.map((item) => <article className="file-row" key={item.id}><div className="file-type">{FORMAT_META[item.from].label}</div><div className="file-details"><strong title={item.file.name}>{item.file.name}</strong><span>{formatBytes(item.file.size)}{item.width ? ` · ${item.width}×${item.height}` : ""}</span>{item.error && <em>{item.error}</em>}</div><div className={`file-status ${item.status}`}>{item.status === "waiting" && text.waiting}{item.status === "converting" && <><LoaderCircle size={15} className="spin" /> {text.converting}</>}{item.status === "done" && <><Check size={15} /> {text.done}</>}{item.status === "error" && <><X size={15} /> {text.error}</>}</div>{item.output && item.outputName ? <button className="download-one" type="button" aria-label={`${text.download} ${item.outputName}`} onClick={() => downloadBlob(item.output!,item.outputName!)}><Download size={17} /></button> : <button className="remove-one" type="button" aria-label={`${text.remove} ${item.file.name}`} disabled={isConverting} onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}><X size={17} /></button>}</article>)}</div></div>}
+    <div className="settings-bar"><label className="quality-control"><span><span className="control-label">{text.quality}</span><strong>{target === "png" ? text.lossless : `${quality}%`}</strong></span><input aria-label={text.quality} type="range" min="25" max="100" value={quality} disabled={target === "png" || isConverting} onChange={(e) => setQuality(Number(e.target.value))} /></label><div className="actions">{doneItems.length > 1 && <button type="button" className="secondary-action" onClick={() => void downloadZip()}><FolderArchive size={18} /> {text.zip}</button>}{doneItems.length === items.length && items.length > 0 ? <button type="button" className="primary-action" onClick={() => setItems((current) => current.map((item) => ({ ...item,status:"waiting",output:undefined,outputName:undefined })))}><RotateCcw size={18} /> {text.again}</button> : <button type="button" className="primary-action" onClick={() => void convertAll()} disabled={!items.length || isConverting}>{isConverting ? <LoaderCircle size={18} className="spin" /> : <ArrowRightLeft size={18} />}{isConverting ? text.progress(progress) : text.convertTo(FORMAT_META[target].label)}</button>}</div></div>
+  </section>;
 }
 
-async function detectFormat(file: File): Promise<Format | null> {
-  const bytes = new Uint8Array(await file.slice(0, 32).arrayBuffer());
-  if (bytes[0] === 0xff && bytes[1] === 0xd8) return "jpeg";
-  if (readAscii(bytes, 1, 3) === "PNG") return "png";
-  if (readAscii(bytes, 0, 4) === "RIFF" && readAscii(bytes, 8, 4) === "WEBP") return "webp";
-  if (readAscii(bytes, 4, 4) === "ftyp") {
-    const brand = readAscii(bytes, 8, 4).toLowerCase();
-    if (["avif", "avis"].includes(brand)) return "avif";
-    if (["heic", "heix", "hevc", "hevx", "mif1", "msf1"].includes(brand)) return "heic";
-  }
-  const extension = file.name.split(".").pop()?.toLowerCase();
-  if (extension === "jpg" || extension === "jpeg") return "jpeg";
-  if (extension && FORMAT_ORDER.includes(extension as Format)) return extension as Format;
-  if (extension === "heif") return "heic";
-  return null;
+function PopularConversions({ exclude }: { exclude?: string }) { const pages = siteContent.conversions.filter((p) => p.slug !== exclude).slice(0,8); return <section className="content-section" aria-labelledby="popular-title"><div className="section-heading"><p className="section-kicker">Quick links</p><h2 id="popular-title">Popular conversions</h2></div><div className="conversion-grid">{pages.map((p) => <a key={p.slug} href={`/${p.slug}`}><span>{FORMAT_META[p.from as Format].label}</span><ArrowRightLeft size={16}/><strong>{FORMAT_META[p.to as Format].label}</strong></a>)}</div></section>; }
+function Faq({ items }: { items: string[][] }) { return <section className="content-section faq-section"><div className="section-heading"><p className="section-kicker">Helpful details</p><h2>Frequently asked questions</h2></div><div className="faq-list">{items.map(([q,a]) => <details key={q}><summary>{q}<ChevronDown size={18}/></summary><p>{a}</p></details>)}</div></section>; }
+
+function HomePage() { return <><section className="hero"><p className="eyebrow">FREE · PRIVATE · NO ACCOUNT</p><h1 id="page-title">Free Online Image Converter</h1><p className="hero-copy">Convert JPG, PNG, WebP, AVIF, and HEIC images quickly in your browser. Choose an output format, add your files, and download the results.</p></section><Converter/><div className="trust-row"><div><ShieldCheck size={21}/><span><strong>Local processing</strong><small>Your images never leave your device</small></span></div><div><FileImage size={21}/><span><strong>Five useful formats</strong><small>Each works as input or output</small></span></div><div><FolderArchive size={21}/><span><strong>Batch conversion</strong><small>Download results together as a ZIP</small></span></div></div><AdSlot slot="after_converter"/><PopularConversions/><section className="content-section split-section"><div><p className="section-kicker">Why use it?</p><h2>A focused tool for everyday formats</h2><p>Codecs run in a background worker, so no signup, server upload, or installation is required.</p><ul className="check-list"><li>Input detection based on file contents</li><li>Adjustable quality for compressed output</li><li>Multiple files in one queue</li><li>Current desktop and mobile browsers</li></ul></div><div><p className="section-kicker">Four simple steps</p><h2>How it works</h2><ol className="step-list"><li><span>1</span><div><strong>Add images</strong><p>Choose files or drag them in.</p></div></li><li><span>2</span><div><strong>Choose output</strong><p>Select a supported format.</p></div></li><li><span>3</span><div><strong>Convert locally</strong><p>Your browser processes each image.</p></div></li><li><span>4</span><div><strong>Download</strong><p>Save one file or a ZIP.</p></div></li></ol></div></section><section className="content-section supported-section" id="supported-formats"><div className="section-heading"><p className="section-kicker">Supported formats</p><h2>Input and output formats</h2><p>JPG/JPEG, PNG, WebP, AVIF, and HEIC/HEIF work in both directions. Animation, SVG, RAW, and PDF are not supported.</p></div><div className="format-cards">{FORMAT_ORDER.map((f) => <div key={f}><strong>{FORMAT_META[f].label}</strong><span>{f === "jpeg" ? "Photos" : f === "png" ? "Lossless graphics" : f === "webp" ? "Web images" : f === "avif" ? "Efficient images" : "Apple photos"}</span></div>)}</div></section><Faq items={HOME_FAQS}/></>; }
+
+function ConversionLanding({ page }: { page: ConversionPage }) { const related = page.related.map((s) => siteContent.conversions.find((p) => p.slug === s)).filter(Boolean) as ConversionPage[]; const from = FORMAT_META[page.from as Format].label; const to = FORMAT_META[page.to as Format].label; return <><nav className="breadcrumbs"><a href="/">Image converter</a><span>/</span><span>{page.h1}</span></nav><section className="hero landing-hero"><p className="eyebrow">FREE BROWSER-BASED CONVERTER</p><h1>{page.h1}</h1><p className="hero-copy">{page.intro}</p></section><Converter initialTarget={page.to as Format} expectedFrom={page.from as Format}/><div className="privacy-note"><LockKeyhole size={18}/><p><strong>Private by design.</strong> Files are processed on this device and are not sent to our server.</p></div><AdSlot slot="after_converter"/><section className="content-section"><div className="section-heading"><p className="section-kicker">Step by step</p><h2>How to convert {from} to {to}</h2></div><ol className="horizontal-steps"><li><span>1</span><strong>Add {from} images</strong><p>Select or drop up to {MAX_BATCH_SIZE} files.</p></li><li><span>2</span><strong>Check output</strong><p>{to} is preselected but can be changed.</p></li><li><span>3</span><strong>Convert</strong><p>Adjust quality when available.</p></li><li><span>4</span><strong>Download</strong><p>Save files or one ZIP.</p></li></ol></section><section className="content-section split-section format-explainer"><div><h2>{page.fromTitle}</h2><p>{page.fromBody}</p></div><div><h2>{page.toTitle}</h2><p>{page.toBody}</p></div></section><section className="content-section use-cases"><div><p className="section-kicker">Practical guidance</p><h2>When should I convert {from} to {to}?</h2><ul className="check-list">{page.when.map((x) => <li key={x}>{x}</li>)}</ul><div className="technical-note"><strong>Keep in mind</strong><p>{page.note}</p></div></div><div className="comparison-wrap"><h2>{from} vs {to}</h2><div className="table-scroll"><table><thead><tr><th>Feature</th><th>{from}</th><th>{to}</th></tr></thead><tbody>{page.comparison.map(([feature,a,b]) => <tr key={feature}><th>{feature}</th><td>{a}</td><td>{b}</td></tr>)}</tbody></table></div></div></section><AdSlot slot="in_content"/><Faq items={page.faqs}/><section className="content-section related-section"><div className="section-heading"><p className="section-kicker">Keep converting</p><h2>Related conversions</h2></div><div className="conversion-grid">{related.map((p) => <a key={p.slug} href={`/${p.slug}`}><span>{FORMAT_META[p.from as Format].label}</span><ArrowRightLeft size={16}/><strong>{FORMAT_META[p.to as Format].label}</strong></a>)}</div></section></>; }
+
+function InfoPage({ type }: { type: "about"|"privacy-policy"|"terms"|"contact" }) {
+  if (type === "about") return <article className="legal-page"><p className="eyebrow">ABOUT THIS TOOL</p><h1>A private, practical image utility</h1><p className="lead">Convert Image is an independent browser-based utility for changing common raster formats without creating an account or uploading personal files.</p><h2>What it does</h2><p>It supports JPG/JPEG, PNG, WebP, AVIF, and HEIC/HEIF as input and output. It processes several still images, adjusts quality where relevant, and packages completed files in a ZIP.</p><h2>Why it works in the browser</h2><p>Decoding and encoding run through WebAssembly codecs inside a Web Worker. Keeping this work on the device improves privacy and avoids storing images on an application server.</p><h2>Scope and direction</h2><p>The project is intentionally focused: a quick converter first, with clear format guidance around it. Future utilities will be added only when they can remain easy to use and honest about file handling.</p><h2>Open-source software</h2><p>Source and third-party notices are in the <a href="https://github.com/SondepzaiVN/convert-image" rel="noopener noreferrer">public GitHub repository</a>.</p></article>;
+  if (type === "privacy-policy") return <article className="legal-page"><p className="eyebrow">LAST UPDATED: SEPTEMBER 27, 2026</p><h1>Privacy Policy</h1><p className="lead">This policy explains how Convert Image handles files and information.</p><h2>Image and file processing</h2><p>Images are read and converted locally in your browser. The application does not upload image contents, keep copies, or create server-side download URLs. Results remain in browser memory until the queue or page is cleared.</p><h2>Data stored</h2><p>Local storage keeps one preference: converter interface language. No account is required. The application currently has no first-party analytics, contact form, or user database.</p><h2>Hosting logs</h2><p>Vercel may process standard request information such as IP address, browser details, URL, timestamps, and diagnostic logs under its policies. Image contents are not part of page requests.</p><h2>Cookies, advertising, and Google AdSense</h2><p>Advertising is not enabled unless valid configuration is supplied. If Google AdSense is enabled, Google and its partners may use cookies or similar technologies to serve, measure, and personalize ads, subject to applicable consent requirements.</p><p>Manage personalized advertising in <a href="https://myadcenter.google.com/" rel="noopener noreferrer">Google My Ad Center</a> and learn more on <a href="https://policies.google.com/technologies/partner-sites" rel="noopener noreferrer">Google's partner-sites policy page</a>. Where required, a Google-certified consent platform should appear before advertising cookies are used.</p><h2>Your choices</h2><p>Clear this site's local storage to remove the language preference. Browser settings can block or delete cookies. This policy will be updated if analytics or advertising changes.</p><h2>Contact</h2><p>For privacy questions, use the <a href="/contact">contact page</a>.</p></article>;
+  if (type === "terms") return <article className="legal-page"><p className="eyebrow">LAST UPDATED: SEPTEMBER 27, 2026</p><h1>Terms of Service</h1><p className="lead">By using Convert Image, you agree to these terms.</p><h2>Use of the service</h2><p>Convert files you own or are authorized to process. Do not use the tool with unlawful content, violate another person's rights, disrupt the site, or compromise its code or hosting.</p><h2>Your responsibility</h2><p>You remain responsible for files, original backups, and checking output. Conversion can remove metadata, change color characteristics, flatten transparency, or introduce compression loss.</p><h2>No guarantee</h2><p>The service is provided “as is” and “as available.” Compatibility with every file, uninterrupted access, and perfect output are not guaranteed.</p><h2>Limitation of liability</h2><p>To the extent permitted by law, the operator is not liable for indirect or consequential loss arising from use, unavailable service, damaged input, or converted output.</p><h2>Changes</h2><p>The service, formats, and terms may change. Continued use after publication means you accept revised terms.</p></article>;
+  return <article className="legal-page"><p className="eyebrow">CONTACT</p><h1>Questions, bugs, or format feedback?</h1><p className="lead">There is no contact form collecting personal details. The public repository is the current contact channel.</p><div className="contact-card"><h2>GitHub</h2><p>Report a reproducible problem, suggest an improvement, or review source code.</p><a className="primary-link" href="https://github.com/SondepzaiVN/convert-image/issues" rel="noopener noreferrer">Open a GitHub issue</a></div><h2>What to include</h2><ul className="check-list"><li>Browser and operating system</li><li>Input and output formats</li><li>Exact error message</li><li>Whether a smaller sample behaves the same</li></ul><p>Do not publish private images in a public issue.</p></article>;
 }
 
-function outputName(name: string, format: Format) {
-  const base = name.replace(/\.[^.]+$/, "") || name;
-  return `${base}.${FORMAT_META[format].extension}`;
-}
-
-function downloadBlob(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function App() {
-  const [language, setLanguage] = useState<Language>(() => {
-    const saved = window.localStorage.getItem("convert-image-language");
-    if (saved === "vi" || saved === "en") return saved;
-    return navigator.language.toLowerCase().startsWith("vi") ? "vi" : "en";
-  });
-  const [items, setItems] = useState<ImageItem[]>([]);
-  const [target, setTarget] = useState<Format>("png");
-  const [quality, setQuality] = useState(86);
-  const [dragging, setDragging] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [isConverting, setIsConverting] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const workerRef = useRef<Worker | null>(null);
-  const text = copy[language];
-
-  const resetResults = useCallback((newTarget: Format) => {
-    setTarget(newTarget);
-    setItems((current) => current.map((item) => ({ ...item, status: "waiting", output: undefined, outputName: undefined, error: undefined })));
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.lang = language;
-    document.title = text.siteName;
-    window.localStorage.setItem("convert-image-language", language);
-  }, [language, text.siteName]);
-
-  useEffect(() => {
-    const worker = new Worker(new URL("./converter.worker.ts", import.meta.url), { type: "module" });
-    workerRef.current = worker;
-    return () => worker.terminate();
-  }, []);
-
-  useEffect(() => {
-    const context = document.modelContext;
-    if (!context?.registerTool) return;
-    const lifecycle = new AbortController();
-    void Promise.resolve(context.registerTool({
-      name: "set_output_format",
-      title: text.webToolTitle,
-      description: text.webToolDescription,
-      inputSchema: { type: "object", properties: { format: { type: "string", enum: FORMAT_ORDER } }, required: ["format"], additionalProperties: false },
-      annotations: { readOnlyHint: false, untrustedContentHint: false },
-      execute(input) {
-        const format = (input as { format?: string })?.format;
-        if (!FORMAT_ORDER.includes(format as Format)) throw new Error(text.invalidFormat);
-        resetResults(format as Format);
-        return { selectedFormat: format };
-      },
-    }, { signal: lifecycle.signal })).catch(() => undefined);
-    return () => lifecycle.abort();
-  }, [resetResults, text.invalidFormat, text.webToolDescription, text.webToolTitle]);
-
-  const doneItems = useMemo(() => items.filter((item) => item.status === "done" && item.output), [items]);
-  const progress = items.length ? Math.round((doneItems.length / items.length) * 100) : 0;
-
-  const addFiles = useCallback(async (files: File[]) => {
-    setNotice("");
-    const next: ImageItem[] = [];
-    let unsupported = 0;
-    for (const file of files) {
-      const from = await detectFormat(file);
-      if (!from) { unsupported += 1; continue; }
-      next.push({ id: crypto.randomUUID(), file, from, status: "waiting" });
-    }
-    setItems((current) => [...current, ...next]);
-    if (unsupported) setNotice(copy[language].unsupported(unsupported));
-  }, [language]);
-
-  const runWorker = useCallback((item: ImageItem) => new Promise<WorkerReply>(async (resolve, reject) => {
-    const worker = workerRef.current;
-    if (!worker) return reject(new Error(copy[language].workerNotReady));
-    const onMessage = (event: MessageEvent<WorkerReply>) => {
-      if (event.data.id !== item.id) return;
-      worker.removeEventListener("message", onMessage);
-      resolve(event.data);
-    };
-    worker.addEventListener("message", onMessage);
-    const buffer = await item.file.arrayBuffer();
-    worker.postMessage({ id: item.id, buffer, from: item.from, to: target, quality, language }, [buffer]);
-  }), [language, quality, target]);
-
-  const convertAll = useCallback(async () => {
-    if (!items.length || isConverting) return;
-    setIsConverting(true);
-    setNotice("");
-    for (const item of [...items]) {
-      setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "converting", error: undefined } : entry));
-      try {
-        const result = await runWorker(item);
-        if (!result.ok || !result.buffer) throw new Error(result.error || copy[language].conversionFailed);
-        const blob = new Blob([result.buffer], { type: FORMAT_META[target].mime });
-        setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "done", output: blob, outputName: outputName(entry.file.name, target), width: result.width, height: result.height } : entry));
-      } catch (error) {
-        setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: "error", error: error instanceof Error ? error.message : copy[language].conversionFailed } : entry));
-      }
-    }
-    setIsConverting(false);
-  }, [isConverting, items, language, runWorker, target]);
-
-  const downloadZip = useCallback(async () => {
-    const zip = new JSZip();
-    doneItems.forEach((item) => item.output && item.outputName && zip.file(item.outputName, item.output));
-    const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
-    downloadBlob(blob, `image-converter-${new Date().toISOString().slice(0, 10)}.zip`);
-  }, [doneItems]);
-
-  return (
-    <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#top" aria-label={`${text.siteName} — ${text.home}`}><span className="brand-mark"><ArrowRightLeft size={19} /></span><span>{text.siteName}</span></a>
-        <div className="header-actions">
-          <div className="topbar-note"><LockKeyhole size={15} /> {text.privacyPill}</div>
-          <div className="language-switch" role="group" aria-label="Language / Ngôn ngữ"><Languages size={16} aria-hidden="true" />
-            {(["vi", "en"] as Language[]).map((value) => <button key={value} type="button" className={language === value ? "active" : ""} aria-pressed={language === value} onClick={() => setLanguage(value)}>{value.toUpperCase()}</button>)}
-          </div>
-        </div>
-      </header>
-
-      <main id="top">
-        <section className="intro" aria-labelledby="page-title">
-          <p className="eyebrow">{text.eyebrow}</p>
-          <h1 id="page-title">{text.siteName}</h1>
-        </section>
-
-        <section className="converter-card" aria-label={text.converterAria}>
-          <div className="format-flow">
-            <div className="format-side"><span className="control-label">{text.input}</span><div className="auto-format"><span>{text.auto}</span><small>JPG · PNG · WEBP · AVIF · HEIC</small></div></div>
-            <div className="flow-arrow" aria-hidden="true"><ArrowRightLeft size={20} /></div>
-            <div className="format-side output-side"><span className="control-label">{text.output}</span><div className="format-options" role="radiogroup" aria-label={text.outputAria}>
-              {FORMAT_ORDER.map((format) => <button key={format} className={target === format ? "format-button active" : "format-button"} type="button" role="radio" aria-checked={target === format} onClick={() => resetResults(format)} disabled={isConverting}>{FORMAT_META[format].label}</button>)}
-            </div></div>
-          </div>
-
-          <div className={dragging ? "drop-zone dragging" : "drop-zone"} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles(Array.from(event.dataTransfer.files)); }}>
-            <input ref={inputRef} type="file" multiple accept=".jpg,.jpeg,.png,.webp,.avif,.heic,.heif,image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif" onChange={(event) => void addFiles(Array.from(event.target.files ?? []))} />
-            <div className="drop-icon"><ImagePlus size={30} /></div>
-            <div><h2>{text.drop}</h2><p>{text.or} <button type="button" className="text-button" onClick={() => inputRef.current?.click()}>{text.choose}</button></p></div>
-            <span className="drop-formats">JPG · JPEG · PNG · WEBP · AVIF · HEIC · HEIF</span>
-          </div>
-
-          {notice && <div className="notice" role="status">{notice}</div>}
-          {items.length > 0 && <div className="queue-panel">
-            <div className="queue-header"><div><span className="control-label">{text.queue}</span><strong>{text.images(items.length)}</strong></div><button className="icon-text-button" type="button" onClick={() => setItems([])} disabled={isConverting}><Trash2 size={16} /> {text.clear}</button></div>
-            <div className="file-list">{items.map((item) => <article className="file-row" key={item.id}>
-              <div className="file-type">{FORMAT_META[item.from].label}</div>
-              <div className="file-details"><strong title={item.file.name}>{item.file.name}</strong><span>{formatBytes(item.file.size)}{item.width ? ` · ${item.width}×${item.height}` : ""}</span>{item.error && <em>{item.error}</em>}</div>
-              <div className={`file-status ${item.status}`}>{item.status === "waiting" && text.waiting}{item.status === "converting" && <><LoaderCircle size={15} className="spin" /> {text.converting}</>}{item.status === "done" && <><Check size={15} /> {text.done}</>}{item.status === "error" && <><X size={15} /> {text.error}</>}</div>
-              {item.output && item.outputName ? <button className="download-one" type="button" aria-label={`${text.download} ${item.outputName}`} onClick={() => downloadBlob(item.output!, item.outputName!)}><Download size={17} /></button> : <button className="remove-one" type="button" aria-label={`${text.remove} ${item.file.name}`} disabled={isConverting} onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}><X size={17} /></button>}
-            </article>)}</div>
-          </div>}
-
-          <div className="settings-bar">
-            <label className="quality-control"><span><span className="control-label">{text.quality}</span><strong>{target === "png" ? text.lossless : `${quality}%`}</strong></span><input type="range" min="25" max="100" value={quality} disabled={target === "png" || isConverting} onChange={(event) => setQuality(Number(event.target.value))} /></label>
-            <div className="actions">
-              {doneItems.length > 1 && <button type="button" className="secondary-action" onClick={() => void downloadZip()}><FolderArchive size={18} /> {text.zip}</button>}
-              {doneItems.length === items.length && items.length > 0 ? <button type="button" className="primary-action" onClick={() => setItems((current) => current.map((item) => ({ ...item, status: "waiting", output: undefined, outputName: undefined })))}><RotateCcw size={18} /> {text.again}</button> : <button type="button" className="primary-action" onClick={() => void convertAll()} disabled={!items.length || isConverting}>{isConverting ? <LoaderCircle size={18} className="spin" /> : <ArrowRightLeft size={18} />}{isConverting ? text.progress(progress) : text.convertTo(FORMAT_META[target].label)}</button>}
-            </div>
-          </div>
-        </section>
-
-        <section className="trust-row" aria-label={text.trustAria}>
-          <div><ShieldCheck size={21} /><span><strong>{text.localTitle}</strong><small>{text.localText}</small></span></div>
-          <div><FileImage size={21} /><span><strong>{text.formatsTitle}</strong><small>{text.formatsText}</small></span></div>
-          <div><FolderArchive size={21} /><span><strong>{text.batchTitle}</strong><small>{text.batchText}</small></span></div>
-        </section>
-      </main>
-      <footer><span>{text.siteName} · {text.footerProduct}</span><span>{text.footerTech}</span></footer>
-    </div>
-  );
-}
-
-createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
+function Header() { const [open,setOpen] = useState(false); return <header className="site-header"><div className="topbar"><a className="brand" href="/"><span className="brand-mark"><ArrowRightLeft size={19}/></span><span>Convert Image</span></a><button className="menu-button" type="button" aria-expanded={open} onClick={() => setOpen(!open)}><Menu size={21}/><span className="sr-only">Menu</span></button><nav className={open ? "site-nav open" : "site-nav"}><a href="/#popular-title">Tools</a><a href="/#supported-formats">Formats</a><a href="/about">About</a></nav><div className="topbar-note"><LockKeyhole size={15}/> Images stay on your device</div></div></header>; }
+function Footer() { return <footer className="site-footer"><div className="footer-grid"><div><a className="brand" href="/"><span className="brand-mark"><ArrowRightLeft size={19}/></span><span>Convert Image</span></a><p>A free image utility that processes files in your browser.</p></div><div><strong>Popular tools</strong><a href="/heic-to-jpg">HEIC to JPG</a><a href="/png-to-jpg">PNG to JPG</a><a href="/jpg-to-png">JPG to PNG</a><a href="/webp-to-png">WebP to PNG</a></div><div><strong>Information</strong><a href="/about">About</a><a href="/privacy-policy">Privacy Policy</a><a href="/terms">Terms</a><a href="/contact">Contact</a></div></div><div className="footer-bottom"><span>© {new Date().getFullYear()} Convert Image</span><span>Processed locally with WebAssembly</span></div></footer>; }
+function App() { const path = location.pathname.replace(/^\/+|\/+$/g,""); const conversion = siteContent.conversions.find((p) => p.slug === path); const info = (["about","privacy-policy","terms","contact"] as const).find((x) => x === path); return <div className="app-shell"><Header/><main id="main-content">{!path ? <HomePage/> : conversion ? <ConversionLanding page={conversion}/> : info ? <InfoPage type={info}/> : <article className="legal-page not-found"><p className="eyebrow">404 ERROR</p><h1>Page not found</h1><p className="lead">The address may be incorrect or the page may have moved.</p><a className="primary-link" href="/">Open the image converter</a></article>}</main><Footer/></div>; }
+createRoot(document.getElementById("root")!).render(<React.StrictMode><App/></React.StrictMode>);

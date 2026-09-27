@@ -42,6 +42,10 @@ npm run build
 
 Các tệp tĩnh được tạo trong thư mục `dist`.
 
+Lệnh build chạy `scripts/generate-pages.mjs` trước Vite để tạo HTML riêng cho
+trang chủ, các landing page chuyển đổi và các trang thông tin. Nội dung SEO,
+canonical, sitemap và route config được quản lý từ `src/site-content.json`.
+
 ## Triển khai lên Vercel
 
 1. Đưa mã nguồn lên một repository Git.
@@ -111,6 +115,11 @@ npm run build
 ```
 
 Static production files are generated in `dist`.
+
+The build runs `scripts/generate-pages.mjs` before Vite. It creates a distinct
+HTML document for the home page, each conversion landing page, and each policy
+page. SEO copy, canonicals, the sitemap, and route configuration are driven by
+`src/site-content.json`.
 
 ## Deploy to Vercel
 

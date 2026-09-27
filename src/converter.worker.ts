@@ -36,7 +36,21 @@ self.onmessage = async (event: MessageEvent<ConvertRequest>) => {
       await target.loadEncoder();
       encoderReady.add(to);
     }
-    const output = target.encode(image as never, encoderOptions(to, quality) as never);
+    // JPEG has no alpha channel. Composite transparent pixels onto white so the
+    // result is predictable instead of turning transparent areas black.
+    let encodable = image;
+    if (to === "jpeg" && image.data.length === image.width * image.height * 4) {
+      const flattened = new Uint8ClampedArray(image.data.length);
+      for (let offset = 0; offset < image.data.length; offset += 4) {
+        const alpha = image.data[offset + 3] / 255;
+        flattened[offset] = Math.round(image.data[offset] * alpha + 255 * (1 - alpha));
+        flattened[offset + 1] = Math.round(image.data[offset + 1] * alpha + 255 * (1 - alpha));
+        flattened[offset + 2] = Math.round(image.data[offset + 2] * alpha + 255 * (1 - alpha));
+        flattened[offset + 3] = 255;
+      }
+      encodable = { ...image, data: flattened };
+    }
+    const output = target.encode(encodable as never, encoderOptions(to, quality) as never);
     const result = output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer;
     self.postMessage({ id, ok: true, buffer: result, width: image.width, height: image.height }, { transfer: [result] });
   } catch (error) {

@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://convert-image.dangson.id.vn/</loc>
-    <changefreq>monthly</changefreq>
-    <priority>1.0</priority>
-  </url>
+  <url><loc>https://convert-image.dangson.id.vn/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/heic-to-jpg</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/heic-to-png</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/png-to-jpg</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/jpg-to-png</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/jpg-to-webp</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/webp-to-jpg</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/webp-to-png</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/png-to-webp</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/avif-to-jpg</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/avif-to-png</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/about</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/privacy-policy</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/terms</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://convert-image.dangson.id.vn/contact</loc><changefreq>monthly</changefreq><priority>0.8</priority></url>
 </urlset>
